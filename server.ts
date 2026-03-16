@@ -26,6 +26,15 @@ async function startServer() {
   });
 
   // API Routes
+  app.get("/api/debug", (req, res) => {
+    res.json({
+      host: process.env.DB_HOST ? process.env.DB_HOST.substring(0, 3) + '...' : 'MISSING',
+      user: process.env.DB_USER ? process.env.DB_USER.substring(0, 3) + '...' : 'MISSING',
+      db: process.env.DB_NAME ? process.env.DB_NAME.substring(0, 3) + '...' : 'MISSING',
+      hasPassword: !!process.env.DB_PASSWORD
+    });
+  });
+
   app.get("/api/health", async (req, res) => {
     try {
       const [rows] = await pool.query('SELECT 1 + 1 AS solution');

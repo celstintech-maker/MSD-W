@@ -1817,15 +1817,24 @@ const App = () => {
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify(p)
                     });
+                    
+                    if (!res.ok) {
+                      const text = await res.text();
+                      let errorMsg = text;
+                      try { errorMsg = JSON.parse(text).error; } catch(e) {}
+                      alert("Server Error: " + errorMsg);
+                      return;
+                    }
+                    
                     const data = await res.json();
                     if (data.id) {
                       setProducts(prev => [...prev, { ...p, id: String(data.id) }]);
                     } else {
                       alert("Error adding product: " + (data.error || "Unknown error"));
                     }
-                  } catch (err) {
+                  } catch (err: any) {
                     console.error(err);
-                    alert("Failed to connect to database.");
+                    alert(`Connection Error: ${err.message}`);
                   }
                 }}
                 onDeleteProduct={async (id) => {
