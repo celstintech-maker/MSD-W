@@ -1524,10 +1524,60 @@ const App = () => {
   });
 
   // Simulated Database of Users
-  const [users, setUsers] = useState<User[]>([
-    { id: '1', name: OWNER_NAME, email: 'info@msdw.com', role: 'admin', wishlist: [], password: 'admin', isVerified: true },
-    { id: '2', name: 'Client User', email: 'client@example.com', role: 'user', wishlist: [], password: 'user', isVerified: true }
-  ]);
+  const [users, setUsers] = useState<User[]>([]);
+
+  useEffect(() => {
+    // Fetch Users
+    fetch('/api/users').then(res => res.json()).then(data => {
+      if (Array.isArray(data) && data.length > 0) {
+        setUsers(data.map(u => ({ ...u, id: String(u.id), wishlist: [], isVerified: true })));
+      } else {
+        setUsers([
+          { id: '1', name: OWNER_NAME, email: 'info@msdw.com', role: 'admin', wishlist: [], password: 'admin', isVerified: true },
+          { id: '2', name: 'Client User', email: 'client@example.com', role: 'user', wishlist: [], password: 'user', isVerified: true }
+        ]);
+      }
+    }).catch(console.error);
+
+    // Fetch Bookings
+    fetch('/api/bookings').then(res => res.json()).then(data => {
+      if (Array.isArray(data)) {
+        setBookings(data.map(b => {
+          let detailsObj = { customerName: 'Unknown', subServiceType: 'General', details: '' };
+          try { detailsObj = JSON.parse(b.details); } catch(e) {}
+          return {
+            id: String(b.id),
+            serviceType: b.service_type,
+            subServiceType: detailsObj.subServiceType || 'General',
+            customerName: detailsObj.customerName || 'Unknown',
+            date: b.booking_date,
+            status: b.status,
+            details: detailsObj.details || b.details,
+            assignedStaff: ''
+          };
+        }));
+      }
+    }).catch(console.error);
+
+    // Fetch Orders
+    fetch('/api/orders').then(res => res.json()).then(data => {
+      if (Array.isArray(data)) {
+        setOrders(data.map(o => ({
+          id: String(o.id),
+          date: o.created_at,
+          items: [], 
+          subtotal: Number(o.total_amount),
+          deliveryFee: 0,
+          total: Number(o.total_amount),
+          deliveryMethod: 'pickup',
+          paymentMethod: 'paystack',
+          paymentStatus: o.status === 'Paid' ? 'Paid' : 'Pending',
+          orderStatus: o.status,
+          customer: { name: 'Customer', email: '', phone: '', address: '' }
+        })));
+      }
+    }).catch(console.error);
+  }, []);
 
   const simulateEmailService = (to: string, subject: string, body: string) => {
     // This simulates calling the backend mailer.php script
@@ -1540,17 +1590,40 @@ const App = () => {
     }, 1000);
   };
 
-  const handleBook = (booking: Partial<ServiceBooking>) => {
-    setBookings(prev => [...prev, {
-      id: Math.random().toString(36).substr(2, 9),
-      serviceType: booking.serviceType || 'Construction',
-      subServiceType: booking.subServiceType || 'General',
-      customerName: booking.customerName || 'Anonymous',
-      date: booking.date || new Date().toISOString().split('T')[0],
-      status: 'Pending',
-      details: booking.details || '',
-      assignedStaff: ''
-    }]);
+  const handleBook = async (booking: Partial<ServiceBooking>) => {
+    try {
+      const res = await fetch('/api/bookings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: user?.id || null,
+          service_type: booking.serviceType || 'Construction',
+          booking_date: booking.date || new Date().toISOString().split('T')[0],
+          details: {
+            customerName: booking.customerName,
+            subServiceType: booking.subServiceType,
+            details: booking.details
+          }
+        })
+      });
+      const data = await res.json();
+      if (data.id) {
+        setBookings(prev => [...prev, {
+          id: String(data.id),
+          serviceType: booking.serviceType || 'Construction',
+          subServiceType: booking.subServiceType || 'General',
+          customerName: booking.customerName || 'Anonymous',
+          date: booking.date || new Date().toISOString().split('T')[0],
+          status: 'Pending',
+          details: booking.details || '',
+          assignedStaff: ''
+        }]);
+        alert('Booking submitted successfully!');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to submit booking.');
+    }
   };
 
   const addToCart = (product: Product) => {
@@ -1567,39 +1640,68 @@ const App = () => {
   };
 
   const handlePlaceOrder = async (orderData: Partial<Order>) => {
-     setOrders(prev => [...prev, {
-        id: Math.random().toString(36).substr(2, 9).toUpperCase(),
-        date: new Date().toISOString().split('T')[0],
-        items: orderData.items || [],
-        subtotal: orderData.subtotal || 0,
-        deliveryFee: orderData.deliveryFee || 0,
-        total: orderData.total || 0,
-        deliveryMethod: orderData.deliveryMethod || 'pickup',
-        paymentMethod: orderData.paymentMethod || 'paystack',
-        paymentStatus: orderData.paymentStatus || 'Pending',
-        paymentProof: orderData.paymentProof,
-        orderStatus: orderData.orderStatus || 'Processing',
-        customer: orderData.customer || { name: '', email: '', phone: '', address: '' }
-     } as Order]);
-     setCart([]);
-     setIsCartOpen(false);
-     alert('Order Placed Successfully!');
+     try {
+       const res = await fetch('/api/orders', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           user_id: user?.id || null,
+           total_amount: orderData.total || 0,
+           payment_reference: `REF-${Date.now()}`,
+           status: 'Pending',
+           items: orderData.items || []
+         })
+       });
+       const data = await res.json();
+       if (data.id) {
+         setOrders(prev => [...prev, {
+            id: String(data.id),
+            date: new Date().toISOString().split('T')[0],
+            items: orderData.items || [],
+            subtotal: orderData.subtotal || 0,
+            deliveryFee: orderData.deliveryFee || 0,
+            total: orderData.total || 0,
+            deliveryMethod: orderData.deliveryMethod || 'pickup',
+            paymentMethod: orderData.paymentMethod || 'paystack',
+            paymentStatus: orderData.paymentStatus || 'Pending',
+            paymentProof: orderData.paymentProof,
+            orderStatus: orderData.orderStatus || 'Processing',
+            customer: orderData.customer || { name: '', email: '', phone: '', address: '' }
+         } as Order]);
+         setCart([]);
+         setIsCartOpen(false);
+         alert('Order Placed Successfully!');
+       }
+     } catch (err) {
+       console.error(err);
+       alert('Failed to place order.');
+     }
   };
 
-  const handleOrderUpdate = (id: string, updates: Partial<Order>) => {
-    setOrders(prev => prev.map(o => {
-      if (o.id === id) {
-        // Detect changes for notifications
-        if (updates.orderStatus && updates.orderStatus !== o.orderStatus) {
-           simulateEmailService(o.customer.email, `Order Status Update #${o.id}`, `Dear ${o.customer.name}, your order is now ${updates.orderStatus}. Check your dashboard for details.`);
-        }
-        if (updates.paymentStatus && updates.paymentStatus !== o.paymentStatus) {
-           simulateEmailService(o.customer.email, `Payment Status Update #${o.id}`, `Dear ${o.customer.name}, your payment status is now ${updates.paymentStatus}.`);
-        }
-        return { ...o, ...updates };
+  const handleOrderUpdate = async (id: string, updates: Partial<Order>) => {
+    try {
+      if (updates.orderStatus) {
+        await fetch(`/api/orders/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: updates.orderStatus })
+        });
       }
-      return o;
-    }));
+      setOrders(prev => prev.map(o => {
+        if (o.id === id) {
+          if (updates.orderStatus && updates.orderStatus !== o.orderStatus) {
+             simulateEmailService(o.customer.email, `Order Status Update #${o.id}`, `Dear ${o.customer.name}, your order is now ${updates.orderStatus}. Check your dashboard for details.`);
+          }
+          if (updates.paymentStatus && updates.paymentStatus !== o.paymentStatus) {
+             simulateEmailService(o.customer.email, `Payment Status Update #${o.id}`, `Dear ${o.customer.name}, your payment status is now ${updates.paymentStatus}.`);
+          }
+          return { ...o, ...updates };
+        }
+        return o;
+      }));
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const handleAddSector = (newSector: SectorInfo) => {
@@ -1631,8 +1733,20 @@ const App = () => {
       window.location.hash = "/";
   };
 
-  const handleAddUser = (u: User) => {
-      setUsers(prev => [...prev, u]);
+  const handleAddUser = async (u: User) => {
+    try {
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: u.name, email: u.email, password: u.password || 'password123', role: u.role })
+      });
+      const data = await res.json();
+      if (data.id) {
+        setUsers(prev => [...prev, { ...u, id: String(data.id) }]);
+      }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   return (
@@ -1679,7 +1793,18 @@ const App = () => {
               <AdminDashboard 
                 user={user} products={products} bookings={bookings} orders={orders} siteConfig={siteConfig} servicePages={servicePages} paymentGateways={paymentGateways} emailSettings={emailSettings} sectors={sectors} chatSettings={chatSettings} users={users}
                 onUpdateServicePage={(s, c) => setServicePages(prev => ({ ...prev, [s]: c }))}
-                onUpdateBooking={(id, s, staff) => setBookings(prev => prev.map(b => b.id === id ? { ...b, status: s, assignedStaff: staff } : b))}
+                onUpdateBooking={async (id, s, staff) => {
+                  try {
+                    await fetch(`/api/bookings/${id}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ status: s })
+                    });
+                    setBookings(prev => prev.map(b => b.id === id ? { ...b, status: s, assignedStaff: staff } : b));
+                  } catch (err) {
+                    console.error(err);
+                  }
+                }}
                 onUpdateConfig={setSiteConfig}
                 onUpdatePaymentGateway={updated => setPaymentGateways(prev => prev.map(gw => gw.id === updated.id ? updated : gw))}
                 onUpdateOrder={handleOrderUpdate}

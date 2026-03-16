@@ -67,6 +67,118 @@ async function startServer() {
     }
   });
 
+  // Users
+  app.get("/api/users", async (req, res) => {
+    try {
+      const [rows] = await pool.query('SELECT id, name, email, role FROM users');
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/users", async (req, res) => {
+    try {
+      const { name, email, password, role } = req.body;
+      const [result] = await pool.query(
+        'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
+        [name, email, password, role || 'user']
+      );
+      res.json({ id: String((result as any).insertId), name, email, role });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Bookings
+  app.get("/api/bookings", async (req, res) => {
+    try {
+      const [rows] = await pool.query('SELECT * FROM service_bookings');
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/bookings", async (req, res) => {
+    try {
+      const { user_id, service_type, details, booking_date } = req.body;
+      const safeServiceType = ['Construction', 'Logistics', 'Cleaning'].includes(service_type) ? service_type : 'Construction';
+      const [result] = await pool.query(
+        'INSERT INTO service_bookings (user_id, service_type, details, booking_date) VALUES (?, ?, ?, ?)',
+        [user_id || null, safeServiceType, JSON.stringify(details), booking_date || new Date().toISOString().slice(0, 19).replace('T', ' ')]
+      );
+      res.json({ id: String((result as any).insertId), ...req.body });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/bookings/:id", async (req, res) => {
+    try {
+      const { status } = req.body;
+      await pool.query('UPDATE service_bookings SET status = ? WHERE id = ?', [status, req.params.id]);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Orders
+  app.get("/api/orders", async (req, res) => {
+    try {
+      const [rows] = await pool.query('SELECT * FROM orders');
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/orders", async (req, res) => {
+    try {
+      const { user_id, total_amount, payment_reference, status, items } = req.body;
+      
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        const [orderResult] = await connection.query(
+          'INSERT INTO orders (user_id, total_amount, payment_reference, status) VALUES (?, ?, ?, ?)',
+          [user_id || null, total_amount, payment_reference || `REF-${Date.now()}`, status || 'Pending']
+        );
+        const orderId = (orderResult as any).insertId;
+        
+        if (items && Array.isArray(items)) {
+          for (const item of items) {
+            await connection.query(
+              'INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)',
+              [orderId, item.product?.id || null, item.quantity, item.product?.price || 0]
+            );
+          }
+        }
+        
+        await connection.commit();
+        res.json({ id: String(orderId), ...req.body });
+      } catch (err) {
+        await connection.rollback();
+        throw err;
+      } finally {
+        connection.release();
+      }
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/orders/:id", async (req, res) => {
+    try {
+      const { status } = req.body;
+      await pool.query('UPDATE orders SET status = ? WHERE id = ?', [status, req.params.id]);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
