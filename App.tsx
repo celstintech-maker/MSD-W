@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { HashRouter as Router, Routes, Route, Link, useNavigate, useParams, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { Product, SectorInfo, User, ServiceBooking, CartItem, ServicePageContent, ServiceImage, ServiceVideo, PaymentGateway, Order, EmailSettings, ChatSettings } from './types';
 import { BRAND_NAME as INITIAL_BRAND_NAME, SECTORS as INITIAL_SECTORS, ADDRESS as INITIAL_ADDRESS, PHONE as INITIAL_PHONE, OWNER_NAME } from './constants';
 import { getAIResponse } from './services/geminiService';
