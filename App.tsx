@@ -174,6 +174,19 @@ const ChatWidget = ({ settings }: { settings: ChatSettings }) => {
 
   if (settings.provider === 'custom') return null;
 
+  if (settings.provider === 'whatsapp' && settings.whatsappNumber) {
+    return (
+      <a 
+        href={`https://wa.me/${settings.whatsappNumber.replace(/[^0-9]/g, '')}`}
+        target="_blank"
+        rel="noreferrer"
+        className="fixed bottom-6 right-6 z-50 w-16 h-16 bg-green-500 text-white rounded-full shadow-2xl flex items-center justify-center text-3xl hover:bg-green-600 transition hover:scale-110 duration-300"
+      >
+        <i className="fab fa-whatsapp"></i>
+      </a>
+    );
+  }
+
   return (
     <Link 
       to="/chat"
@@ -1229,6 +1242,7 @@ const AdminDashboard = ({
                    <div><label className="text-xs font-black uppercase text-slate-400 tracking-widest block mb-2">SMTP Host</label><input value={emailSettings.smtpHost} onChange={e => onUpdateEmailSettings({...emailSettings, smtpHost: e.target.value})} className="w-full border dark:border-slate-700 p-3 rounded-xl font-bold bg-slate-50 dark:bg-slate-900 dark:text-white" /></div>
                    <div><label className="text-xs font-black uppercase text-slate-400 tracking-widest block mb-2">SMTP Port</label><input value={emailSettings.smtpPort} onChange={e => onUpdateEmailSettings({...emailSettings, smtpPort: e.target.value})} className="w-full border dark:border-slate-700 p-3 rounded-xl font-bold bg-slate-50 dark:bg-slate-900 dark:text-white" /></div>
                    <div><label className="text-xs font-black uppercase text-slate-400 tracking-widest block mb-2">SMTP User</label><input value={emailSettings.smtpUser} onChange={e => onUpdateEmailSettings({...emailSettings, smtpUser: e.target.value})} className="w-full border dark:border-slate-700 p-3 rounded-xl font-bold bg-slate-50 dark:bg-slate-900 dark:text-white" /></div>
+                   <div><label className="text-xs font-black uppercase text-slate-400 tracking-widest block mb-2">SMTP Password</label><input type="password" value={emailSettings.smtpPassword || ''} onChange={e => onUpdateEmailSettings({...emailSettings, smtpPassword: e.target.value})} className="w-full border dark:border-slate-700 p-3 rounded-xl font-bold bg-slate-50 dark:bg-slate-900 dark:text-white" /></div>
                    <div><label className="text-xs font-black uppercase text-slate-400 tracking-widest block mb-2">Sender Name</label><input value={emailSettings.senderName} onChange={e => onUpdateEmailSettings({...emailSettings, senderName: e.target.value})} className="w-full border dark:border-slate-700 p-3 rounded-xl font-bold bg-slate-50 dark:bg-slate-900 dark:text-white" /></div>
                 </div>
                 <div className="bg-slate-50 dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-700">
@@ -1527,6 +1541,13 @@ const App = () => {
   const [users, setUsers] = useState<User[]>([]);
 
   useEffect(() => {
+    // Fetch Settings
+    fetch('/api/settings').then(res => res.json()).then(data => {
+      if (data.siteConfig && Object.keys(data.siteConfig).length > 0) setSiteConfig(prev => ({...prev, ...data.siteConfig}));
+      if (data.emailSettings && Object.keys(data.emailSettings).length > 0) setEmailSettings(prev => ({...prev, ...data.emailSettings}));
+      if (data.chatSettings && Object.keys(data.chatSettings).length > 0) setChatSettings(prev => ({...prev, ...data.chatSettings}));
+    }).catch(console.error);
+
     // Fetch Users
     fetch('/api/users').then(res => res.json()).then(data => {
       if (Array.isArray(data) && data.length > 0) {
@@ -1579,15 +1600,17 @@ const App = () => {
     }).catch(console.error);
   }, []);
 
-  const simulateEmailService = (to: string, subject: string, body: string) => {
-    // This simulates calling the backend mailer.php script
-    console.log(`%c[Email Service Provider] Sending to: ${to}`, 'color: cyan; font-weight: bold;');
-    console.log(`Subject: ${subject}`);
-    console.log(`Body: ${body}`);
-    // Simulate server response time
-    setTimeout(() => {
-        // alert(`[Email Verification System]\n\nEmail sent to: ${to}\nSubject: ${subject}\n\n(See console for full details)`);
-    }, 1000);
+  const simulateEmailService = async (to: string, subject: string, body: string) => {
+    try {
+      await fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, subject, body })
+      });
+      console.log(`%c[Email Service Provider] Sent to: ${to}`, 'color: cyan; font-weight: bold;');
+    } catch (e) {
+      console.error("Failed to send email", e);
+    }
   };
 
   const handleBook = async (booking: Partial<ServiceBooking>) => {
@@ -1608,17 +1631,22 @@ const App = () => {
       });
       const data = await res.json();
       if (data.id) {
-        setBookings(prev => [...prev, {
+        const newBooking = {
           id: String(data.id),
           serviceType: booking.serviceType || 'Construction',
           subServiceType: booking.subServiceType || 'General',
           customerName: booking.customerName || 'Anonymous',
           date: booking.date || new Date().toISOString().split('T')[0],
-          status: 'Pending',
+          status: 'Pending' as const,
           details: booking.details || '',
           assignedStaff: ''
-        }]);
+        };
+        setBookings(prev => [...prev, newBooking]);
         alert('Booking submitted successfully!');
+        
+        if (emailSettings.enableAdminNotifications && emailSettings.adminNotificationEmail) {
+          simulateEmailService(emailSettings.adminNotificationEmail, `New Booking #${newBooking.id}`, `A new booking has been made by ${newBooking.customerName} for ${newBooking.serviceType} - ${newBooking.subServiceType}.\n\nDate: ${newBooking.date}`);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -1639,6 +1667,45 @@ const App = () => {
     setCart(prev => prev.map(item => item.product.id === id ? { ...item, quantity: Math.max(0, item.quantity + delta) } : item).filter(i => i.quantity > 0));
   };
 
+  const handleUpdateConfig = async (config: SiteConfig) => {
+    setSiteConfig(config);
+    try {
+      await fetch('/api/settings/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config)
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleUpdateEmailSettings = async (settings: EmailSettings) => {
+    setEmailSettings(settings);
+    try {
+      await fetch('/api/settings/email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleUpdateChatSettings = async (settings: ChatSettings) => {
+    setChatSettings(settings);
+    try {
+      await fetch('/api/settings/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const handlePlaceOrder = async (orderData: Partial<Order>) => {
      try {
        const res = await fetch('/api/orders', {
@@ -1654,7 +1721,7 @@ const App = () => {
        });
        const data = await res.json();
        if (data.id) {
-         setOrders(prev => [...prev, {
+         const newOrder = {
             id: String(data.id),
             date: new Date().toISOString().split('T')[0],
             items: orderData.items || [],
@@ -1667,10 +1734,18 @@ const App = () => {
             paymentProof: orderData.paymentProof,
             orderStatus: orderData.orderStatus || 'Processing',
             customer: orderData.customer || { name: '', email: '', phone: '', address: '' }
-         } as Order]);
+         } as Order;
+         setOrders(prev => [...prev, newOrder]);
          setCart([]);
          setIsCartOpen(false);
          alert('Order Placed Successfully!');
+         
+         if (emailSettings.enableAutoResponse && newOrder.customer.email) {
+           simulateEmailService(newOrder.customer.email, `Order Confirmation #${newOrder.id}`, `Dear ${newOrder.customer.name},\n\nThank you for your order. Your order #${newOrder.id} is currently processing.\n\nTotal: ₦${newOrder.total.toLocaleString()}\n\nWe will notify you once it ships.`);
+         }
+         if (emailSettings.enableAdminNotifications && emailSettings.adminNotificationEmail) {
+           simulateEmailService(emailSettings.adminNotificationEmail, `New Order #${newOrder.id}`, `A new order has been placed by ${newOrder.customer.name}.\n\nTotal: ₦${newOrder.total.toLocaleString()}`);
+         }
        }
      } catch (err) {
        console.error(err);
@@ -1805,11 +1880,11 @@ const App = () => {
                     console.error(err);
                   }
                 }}
-                onUpdateConfig={setSiteConfig}
+                onUpdateConfig={handleUpdateConfig}
                 onUpdatePaymentGateway={updated => setPaymentGateways(prev => prev.map(gw => gw.id === updated.id ? updated : gw))}
                 onUpdateOrder={handleOrderUpdate}
-                onUpdateEmailSettings={setEmailSettings}
-                onUpdateChatSettings={setChatSettings}
+                onUpdateEmailSettings={handleUpdateEmailSettings}
+                onUpdateChatSettings={handleUpdateChatSettings}
                 onAddProduct={async (p) => {
                   try {
                     const res = await fetch('/api/products', {

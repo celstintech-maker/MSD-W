@@ -4,35 +4,240 @@ import mysql from "mysql2/promise";
 import cors from "cors";
 import path from "path";
 import dotenv from "dotenv";
+import nodemailer from "nodemailer";
 
 dotenv.config();
 
+let initError: any = null;
+
+// MySQL Connection Pool
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'msdw_holdings',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
+
+async function initDB() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS products (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        price DECIMAL(10, 2) NOT NULL,
+        category VARCHAR(100),
+        stock INT DEFAULT 0,
+        image_url LONGTEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Ensure image_url is LONGTEXT if it was previously created as TEXT
+    try {
+      await pool.query('ALTER TABLE products MODIFY COLUMN image_url LONGTEXT');
+    } catch (e) {
+      console.log('Could not modify image_url column, it might already be LONGTEXT');
+    }
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        role VARCHAR(50) DEFAULT 'user',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS service_bookings (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT,
+        service_type VARCHAR(100) NOT NULL,
+        booking_date DATE NOT NULL,
+        status VARCHAR(50) DEFAULT 'Pending',
+        details TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS orders (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT,
+        total_amount DECIMAL(10, 2) NOT NULL,
+        status VARCHAR(50) DEFAULT 'Pending',
+        payment_reference VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS order_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id INT NOT NULL,
+        product_id INT,
+        quantity INT NOT NULL,
+        price DECIMAL(10, 2) NOT NULL,
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS site_settings (
+        id INT PRIMARY KEY,
+        site_config LONGTEXT,
+        email_settings LONGTEXT,
+        chat_settings LONGTEXT
+      )
+    `);
+
+    await pool.query(`
+      INSERT IGNORE INTO site_settings (id, site_config, email_settings, chat_settings) 
+      VALUES (1, '{}', '{}', '{}')
+    `);
+
+    console.log("Database tables initialized successfully.");
+  } catch (error) {
+    initError = error;
+    console.error("Failed to initialize database tables:", error);
+  }
+}
+
 async function startServer() {
+  await initDB();
   const app = express();
   const PORT = 3000;
 
   app.use(cors());
-  app.use(express.json());
-
-  // MySQL Connection Pool
-  const pool = mysql.createPool({
-    host: process.env.DB_HOST || 'localhost',
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'msdw_holdings',
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0
-  });
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   // API Routes
+  app.get("/api/settings", async (req, res) => {
+    try {
+      const [rows]: any = await pool.query('SELECT * FROM site_settings WHERE id = 1');
+      if (rows.length > 0) {
+        res.json({
+          siteConfig: JSON.parse(rows[0].site_config || '{}'),
+          emailSettings: JSON.parse(rows[0].email_settings || '{}'),
+          chatSettings: JSON.parse(rows[0].chat_settings || '{}')
+        });
+      } else {
+        res.json({});
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/settings/config", async (req, res) => {
+    try {
+      await pool.query('UPDATE site_settings SET site_config = ? WHERE id = 1', [JSON.stringify(req.body)]);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/settings/email", async (req, res) => {
+    try {
+      await pool.query('UPDATE site_settings SET email_settings = ? WHERE id = 1', [JSON.stringify(req.body)]);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/settings/chat", async (req, res) => {
+    try {
+      await pool.query('UPDATE site_settings SET chat_settings = ? WHERE id = 1', [JSON.stringify(req.body)]);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/send-email", async (req, res) => {
+    try {
+      const { to, subject, body } = req.body;
+      
+      const [rows]: any = await pool.query('SELECT email_settings FROM site_settings WHERE id = 1');
+      if (rows.length === 0) {
+        return res.status(500).json({ error: "Email settings not configured" });
+      }
+
+      const settings = JSON.parse(rows[0].email_settings || '{}');
+      
+      if (!settings.smtpHost || !settings.smtpUser || !settings.smtpPort) {
+        return res.status(500).json({ error: "Incomplete email settings" });
+      }
+
+      // We need the password from env or settings. Since settings might not store password securely,
+      // we'll assume it's in env or we can add it to settings. For now, let's use env if available,
+      // or if they saved it in settings (though the frontend doesn't have a password field).
+      // Let's check if there's a password field in EmailSettings.
+      // Wait, the frontend didn't have a password field. Let's use process.env.SMTP_PASSWORD
+      
+      const transporter = nodemailer.createTransport({
+        host: settings.smtpHost,
+        port: parseInt(settings.smtpPort, 10),
+        secure: parseInt(settings.smtpPort, 10) === 465,
+        auth: {
+          user: settings.smtpUser,
+          pass: process.env.SMTP_PASSWORD || settings.smtpPassword || ''
+        }
+      });
+
+      await transporter.sendMail({
+        from: `"${settings.senderName || 'MSD&W'}" <${settings.smtpUser}>`,
+        to,
+        subject,
+        text: body,
+        html: body.replace(/\n/g, '<br>')
+      });
+
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("Email send error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/debug", (req, res) => {
     res.json({
       host: process.env.DB_HOST ? process.env.DB_HOST.substring(0, 3) + '...' : 'MISSING',
       user: process.env.DB_USER ? process.env.DB_USER.substring(0, 3) + '...' : 'MISSING',
       db: process.env.DB_NAME ? process.env.DB_NAME.substring(0, 3) + '...' : 'MISSING',
-      hasPassword: !!process.env.DB_PASSWORD
+      hasPassword: !!process.env.DB_PASSWORD,
+      initError: initError ? initError.message : null
     });
+  });
+
+  app.get("/api/debug/schema", async (req, res) => {
+    try {
+      const [rows] = await pool.query('DESCRIBE products');
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/debug/tables", async (req, res) => {
+    try {
+      const [rows] = await pool.query('SHOW TABLES');
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   app.get("/api/health", async (req, res) => {

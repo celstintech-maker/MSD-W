@@ -98,6 +98,7 @@ export interface EmailSettings {
   smtpHost: string;
   smtpPort: string;
   smtpUser: string;
+  smtpPassword?: string;
   senderName: string;
   enableAutoResponse: boolean;
   enableAdminNotifications: boolean;
