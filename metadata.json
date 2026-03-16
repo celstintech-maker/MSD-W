@@ -1,0 +1,7 @@
+{
+  "name": "MSD&W Integrated Holdings Platform",
+  "description": "A comprehensive multi-sector conglomerate platform for MSD&W, featuring e-commerce for fashion and wholesale, and service management for construction, logistics, and cleaning services.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
