@@ -1455,6 +1455,25 @@ const App = () => {
     { id: '4', name: 'Corporate Oxford Shirt', description: 'Crisp white cotton shirt for business executives.', price: 15000, category: 'Fashion', image: 'https://images.unsplash.com/photo-1596755094514-f87e34085b2c?auto=format&fit=crop&q=80&w=800', stock: 50 },
   ]);
 
+  useEffect(() => {
+    fetch('/api/products')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setProducts(data.map(p => ({
+            id: String(p.id),
+            name: p.name,
+            description: p.description,
+            price: Number(p.price),
+            category: p.category,
+            image: p.image_url || 'https://images.unsplash.com/photo-1593030761757-71fae45fa0e7?auto=format&fit=crop&q=80&w=800',
+            stock: p.stock
+          })));
+        }
+      })
+      .catch(err => console.error("Failed to fetch products:", err));
+  }, []);
+
   const [servicePages, setServicePages] = useState<Record<string, ServicePageContent>>({
     'Construction': { 
       description: 'Scaleable urban infrastructure and civil engineering works.',
@@ -1666,8 +1685,32 @@ const App = () => {
                 onUpdateOrder={handleOrderUpdate}
                 onUpdateEmailSettings={setEmailSettings}
                 onUpdateChatSettings={setChatSettings}
-                onAddProduct={(p) => setProducts(prev => [...prev, p])}
-                onDeleteProduct={(id) => setProducts(prev => prev.filter(p => p.id !== id))}
+                onAddProduct={async (p) => {
+                  try {
+                    const res = await fetch('/api/products', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(p)
+                    });
+                    const data = await res.json();
+                    if (data.id) {
+                      setProducts(prev => [...prev, { ...p, id: String(data.id) }]);
+                    } else {
+                      alert("Error adding product: " + (data.error || "Unknown error"));
+                    }
+                  } catch (err) {
+                    console.error(err);
+                    alert("Failed to connect to database.");
+                  }
+                }}
+                onDeleteProduct={async (id) => {
+                  try {
+                    await fetch(`/api/products/${id}`, { method: 'DELETE' });
+                    setProducts(prev => prev.filter(p => p.id !== id));
+                  } catch (err) {
+                    console.error(err);
+                  }
+                }}
                 onUpdateProduct={(updated) => setProducts(prev => prev.map(p => p.id === updated.id ? updated : p))}
                 onAddSector={handleAddSector}
                 onAddUser={handleAddUser}
