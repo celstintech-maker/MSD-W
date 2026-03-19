@@ -38,6 +38,7 @@ export interface CartItem {
 
 export interface ServiceBooking {
   id: string;
+  userId?: string;
   serviceType: string; // Changed from Enum to string
   subServiceType?: string; // Specific service chosen
   customerName: string;
@@ -75,6 +76,7 @@ export interface PaymentGateway {
 
 export interface Order {
   id: string;
+  userId?: string;
   customer: {
     name: string;
     email: string;

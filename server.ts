@@ -50,8 +50,27 @@ async function initDB() {
         email VARCHAR(255) UNIQUE NOT NULL,
         password VARCHAR(255) NOT NULL,
         role VARCHAR(50) DEFAULT 'user',
+        wishlist LONGTEXT,
+        cart LONGTEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
+    `);
+
+    try {
+      await pool.query('ALTER TABLE users ADD COLUMN wishlist LONGTEXT');
+    } catch (e) {
+      console.log('Could not add wishlist column, it might already exist');
+    }
+
+    try {
+      await pool.query('ALTER TABLE users ADD COLUMN cart LONGTEXT');
+    } catch (e) {
+      console.log('Could not add cart column, it might already exist');
+    }
+
+    await pool.query(`
+      INSERT IGNORE INTO users (name, email, password, role) 
+      VALUES ('System Admin', 'info@msdw.com', 'admin', 'admin')
     `);
 
     await pool.query(`
@@ -284,7 +303,7 @@ async function startServer() {
   // Users
   app.get("/api/users", async (req, res) => {
     try {
-      const [rows] = await pool.query('SELECT id, name, email, role FROM users');
+      const [rows] = await pool.query('SELECT id, name, email, role, wishlist, cart FROM users');
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -295,10 +314,44 @@ async function startServer() {
     try {
       const { name, email, password, role } = req.body;
       const [result] = await pool.query(
-        'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
-        [name, email, password, role || 'user']
+        'INSERT INTO users (name, email, password, role, wishlist, cart) VALUES (?, ?, ?, ?, ?, ?)',
+        [name, email, password, role || 'user', '[]', '[]']
       );
-      res.json({ id: String((result as any).insertId), name, email, role });
+      res.json({ id: String((result as any).insertId), name, email, role, wishlist: '[]', cart: '[]' });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      const [rows]: any = await pool.query('SELECT id, name, email, role, wishlist, cart FROM users WHERE email = ? AND password = ?', [email, password]);
+      if (rows.length > 0) {
+        res.json(rows[0]);
+      } else {
+        res.status(401).json({ error: "Invalid credentials" });
+      }
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/users/:id/wishlist", async (req, res) => {
+    try {
+      const { wishlist } = req.body;
+      await pool.query('UPDATE users SET wishlist = ? WHERE id = ?', [JSON.stringify(wishlist), req.params.id]);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/users/:id/cart", async (req, res) => {
+    try {
+      const { cart } = req.body;
+      await pool.query('UPDATE users SET cart = ? WHERE id = ?', [JSON.stringify(cart), req.params.id]);
+      res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

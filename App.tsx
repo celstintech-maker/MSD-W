@@ -716,37 +716,58 @@ const WishlistPage = ({ user, products, addToCart, removeFromWishlist }: any) =>
     )
 }
 
-const AuthPage = ({ onLogin }: { onLogin: (u: User) => void }) => {
+const AuthPage = ({ onLogin }: { onLogin: (u: User, userCart?: CartItem[]) => void }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (email === 'info@msdw.com' && password === 'admin') {
-        onLogin({
-            id: 'admin-1',
-            name: 'System Admin',
-            email,
-            role: 'admin',
-            wishlist: [],
-            isVerified: true
+    setLoading(true);
+    try {
+      if (isLogin) {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
         });
-        navigate('/admin');
-    } else if(email === 'client@example.com' && password === 'user') {
-        onLogin({
-            id: 'client-1',
-            name: 'Client User',
-            email,
-            role: 'user',
-            wishlist: [],
-            isVerified: true
+        const data = await res.json();
+        if (res.ok) {
+          let parsedWishlist = [];
+          try { parsedWishlist = JSON.parse(data.wishlist || '[]'); } catch(e) {}
+          let parsedCart = [];
+          try { parsedCart = JSON.parse(data.cart || '[]'); } catch(e) {}
+          onLogin({ ...data, id: String(data.id), wishlist: parsedWishlist, isVerified: true }, parsedCart);
+          navigate(data.role === 'admin' ? '/admin' : '/dashboard');
+        } else {
+          alert(data.error || "Invalid credentials.");
+        }
+      } else {
+        const res = await fetch('/api/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, password, role: 'user' })
         });
-        navigate('/dashboard');
-    } else {
-        alert("Invalid credentials. Try admin: info@msdw.com/admin or user: client@example.com/user");
+        const data = await res.json();
+        if (res.ok) {
+          let parsedWishlist = [];
+          try { parsedWishlist = JSON.parse(data.wishlist || '[]'); } catch(e) {}
+          let parsedCart = [];
+          try { parsedCart = JSON.parse(data.cart || '[]'); } catch(e) {}
+          onLogin({ ...data, id: String(data.id), wishlist: parsedWishlist, isVerified: true }, parsedCart);
+          navigate('/dashboard');
+        } else {
+          alert(data.error || "Failed to create account.");
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Connection error. Please try again.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -764,8 +785,8 @@ const AuthPage = ({ onLogin }: { onLogin: (u: User) => void }) => {
           <input type="email" required className="appearance-none rounded-xl relative block w-full px-4 py-4 border border-slate-300 dark:border-slate-700 placeholder-slate-500 text-slate-900 dark:text-white dark:bg-slate-900 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm font-bold" placeholder="Email address" value={email} onChange={e => setEmail(e.target.value)} />
           <input type="password" required className="appearance-none rounded-xl relative block w-full px-4 py-4 border border-slate-300 dark:border-slate-700 placeholder-slate-500 text-slate-900 dark:text-white dark:bg-slate-900 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm font-bold" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} />
           
-          <button type="submit" className="group relative w-full flex justify-center py-4 px-4 border border-transparent text-sm font-black rounded-xl text-white bg-indigo-900 hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-            {isLogin ? 'Sign In' : 'Create Account'}
+          <button type="submit" disabled={loading} className="group relative w-full flex justify-center py-4 px-4 border border-transparent text-sm font-black rounded-xl text-white bg-indigo-900 hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50">
+            {loading ? 'Processing...' : (isLogin ? 'Sign In' : 'Create Account')}
           </button>
         </form>
         <div className="text-center">
@@ -779,7 +800,8 @@ const AuthPage = ({ onLogin }: { onLogin: (u: User) => void }) => {
 };
 
 const UserDashboard = ({ user, bookings, orders }: { user: User, bookings: ServiceBooking[], orders: Order[] }) => {
-    const myBookings = bookings.filter(b => b.customerName === user.name);
+    const myBookings = bookings.filter(b => b.userId === user.id || b.customerName === user.name);
+    const myOrders = orders.filter(o => o.userId === user.id);
     
     return (
         <div className="max-w-7xl mx-auto px-4 py-12">
@@ -798,6 +820,22 @@ const UserDashboard = ({ user, bookings, orders }: { user: User, bookings: Servi
                             </div>
                         ))}
                         {myBookings.length === 0 && <p className="text-slate-400">No active bookings.</p>}
+                    </div>
+                </div>
+                <div>
+                    <h2 className="text-xl font-black mb-4 dark:text-white">My Orders</h2>
+                    <div className="space-y-4">
+                        {myOrders.map(o => (
+                            <div key={o.id} className="bg-white dark:bg-slate-800 p-6 rounded-2xl border dark:border-slate-700">
+                                <div className="flex justify-between mb-2">
+                                    <span className="font-bold dark:text-white">Order #{o.id}</span>
+                                    <span className="text-xs font-bold uppercase bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded">{o.orderStatus}</span>
+                                </div>
+                                <p className="text-sm text-slate-500 mb-2">{new Date(o.date).toLocaleDateString()}</p>
+                                <p className="font-black text-indigo-600 dark:text-indigo-400">₦{o.total.toLocaleString()}</p>
+                            </div>
+                        ))}
+                        {myOrders.length === 0 && <p className="text-slate-400">No active orders.</p>}
                     </div>
                 </div>
             </div>
@@ -1448,8 +1486,22 @@ const App = () => {
     const saved = localStorage.getItem('user');
     return saved ? JSON.parse(saved) : null;
   });
-  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    const saved = localStorage.getItem('cart');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [isCartOpen, setIsCartOpen] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('cart', JSON.stringify(cart));
+    if (user) {
+      fetch(`/api/users/${user.id}/cart`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cart })
+      }).catch(console.error);
+    }
+  }, [cart, user?.id]);
 
   // Initialize Theme
   useEffect(() => {
@@ -1605,7 +1657,11 @@ const App = () => {
     // Fetch Users
     fetch('/api/users').then(res => res.json()).then(data => {
       if (Array.isArray(data) && data.length > 0) {
-        setUsers(data.map(u => ({ ...u, id: String(u.id), wishlist: [], isVerified: true })));
+        setUsers(data.map(u => {
+          let parsedWishlist = [];
+          try { parsedWishlist = JSON.parse(u.wishlist || '[]'); } catch(e) {}
+          return { ...u, id: String(u.id), wishlist: parsedWishlist, isVerified: true };
+        }));
       } else {
         setUsers([
           { id: '1', name: OWNER_NAME, email: 'info@msdw.com', role: 'admin', wishlist: [], password: 'admin', isVerified: true },
@@ -1622,6 +1678,7 @@ const App = () => {
           try { detailsObj = JSON.parse(b.details); } catch(e) {}
           return {
             id: String(b.id),
+            userId: b.user_id ? String(b.user_id) : undefined,
             serviceType: b.service_type,
             subServiceType: detailsObj.subServiceType || 'General',
             customerName: detailsObj.customerName || 'Unknown',
@@ -1639,6 +1696,7 @@ const App = () => {
       if (Array.isArray(data)) {
         setOrders(data.map(o => ({
           id: String(o.id),
+          userId: o.user_id ? String(o.user_id) : undefined,
           date: o.created_at,
           items: [], 
           subtotal: Number(o.total_amount),
@@ -1859,7 +1917,7 @@ const App = () => {
     setServicePages(prev => ({...prev, [newSector.name]: { description: `Standard ${newSector.name} services.`, images: [], videos: [] }}));
   };
 
-  const handleToggleWishlist = (productId: string) => {
+  const handleToggleWishlist = async (productId: string) => {
     if (!user) {
         alert("Please log in to manage your wishlist.");
         window.location.hash = "#/login";
@@ -1871,17 +1929,41 @@ const App = () => {
     
     const updatedUser = { ...user, wishlist: newWishlist };
     setUser(updatedUser);
+    localStorage.setItem('user', JSON.stringify(updatedUser));
     setUsers(users.map(u => u.id === user.id ? updatedUser : u));
+
+    try {
+      await fetch(`/api/users/${user.id}/wishlist`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wishlist: newWishlist })
+      });
+    } catch (e) {
+      console.error("Failed to update wishlist", e);
+    }
   };
 
-  const handleLogin = (u: User) => {
+  const handleLogin = (u: User, userCart?: CartItem[]) => {
       setUser(u);
       localStorage.setItem('user', JSON.stringify(u));
+      if (userCart && userCart.length > 0) {
+        setCart(prev => {
+          const merged = [...prev];
+          userCart.forEach(uc => {
+            if (!merged.some(c => c.product.id === uc.product.id)) {
+              merged.push(uc);
+            }
+          });
+          return merged;
+        });
+      }
   };
   
   const handleLogout = () => {
       setUser(null);
+      setCart([]);
       localStorage.removeItem('user');
+      localStorage.removeItem('cart');
       window.location.hash = "/";
   };
 
