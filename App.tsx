@@ -4,6 +4,46 @@ import { Product, SectorInfo, User, ServiceBooking, CartItem, ServicePageContent
 import { BRAND_NAME as INITIAL_BRAND_NAME, SECTORS as INITIAL_SECTORS, ADDRESS as INITIAL_ADDRESS, PHONE as INITIAL_PHONE, OWNER_NAME } from './constants';
 import { getAIResponse } from './services/geminiService';
 
+const resizeImage = (file: File, maxWidth: number, maxHeight: number): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL(file.type || 'image/jpeg', 0.8));
+        } else {
+          resolve(e.target?.result as string);
+        }
+      };
+      img.onerror = reject;
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+};
+
 // --- Types ---
 interface SiteConfig {
   brandName: string;
@@ -819,21 +859,26 @@ const AdminDashboard = ({
     }
   };
 
-  const handleFileUpload = (type: 'images' | 'videos', files: FileList | null) => {
+  const handleFileUpload = async (type: 'images' | 'videos', files: FileList | null) => {
     if (!files || !servicePages[selectedSector]) return;
     const current = servicePages[selectedSector];
-    Array.from(files).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const base64 = e.target?.result as string;
-        if (type === 'images') {
-           onUpdateServicePage(selectedSector, { ...current, images: [...(current.images || []), { url: base64, story: '' }] });
-        } else {
-           onUpdateServicePage(selectedSector, { ...current, videos: [...(current.videos || []), { url: base64, type: 'file' }] });
+    for (const file of Array.from(files)) {
+      if (type === 'images') {
+        try {
+          const base64 = await resizeImage(file, 1200, 1200);
+          onUpdateServicePage(selectedSector, { ...current, images: [...(current.images || []), { url: base64, story: '' }] });
+        } catch (err) {
+          console.error("Error resizing image", err);
         }
-      };
-      reader.readAsDataURL(file);
-    });
+      } else {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const base64 = e.target?.result as string;
+          onUpdateServicePage(selectedSector, { ...current, videos: [...(current.videos || []), { url: base64, type: 'file' }] });
+        };
+        reader.readAsDataURL(file);
+      }
+    }
   };
 
   const handleImageStoryChange = (index: number, newStory: string) => {
@@ -868,18 +913,18 @@ const AdminDashboard = ({
     }
   };
 
-  const handleProductImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProductImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const result = ev.target?.result as string;
+      try {
+        const result = await resizeImage(e.target.files[0], 800, 800);
         if (editingProduct) {
             setEditingProduct(prev => prev ? ({ ...prev, image: result }) : null);
         } else {
             setNewProduct(prev => ({ ...prev, image: result }));
         }
-      };
-      reader.readAsDataURL(e.target.files[0]);
+      } catch (err) {
+        console.error("Error resizing image", err);
+      }
     }
   };
 
@@ -1196,22 +1241,28 @@ const AdminDashboard = ({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t dark:border-slate-700">
                    <div>
                       <label className="text-xs font-black uppercase text-slate-400 tracking-widest block mb-2">Site Logo</label>
-                      <input type="file" accept="image/*" onChange={(e) => {
+                      <input type="file" accept="image/*" onChange={async (e) => {
                           if (e.target.files && e.target.files[0]) {
-                            const reader = new FileReader();
-                            reader.onload = (ev) => onUpdateConfig({...siteConfig, logo: ev.target?.result as string});
-                            reader.readAsDataURL(e.target.files[0]);
+                            try {
+                              const resized = await resizeImage(e.target.files[0], 500, 500);
+                              onUpdateConfig({...siteConfig, logo: resized});
+                            } catch (err) {
+                              console.error("Error resizing image", err);
+                            }
                           }
                       }} className="w-full text-sm text-slate-500 dark:text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 dark:file:bg-indigo-900 dark:file:text-indigo-200" />
                       {siteConfig.logo && <div className="mt-2"><img src={siteConfig.logo} alt="Logo Preview" className="h-16 object-contain border dark:border-slate-700 p-1 rounded-lg bg-white" /></div>}
                    </div>
                    <div>
                       <label className="text-xs font-black uppercase text-slate-400 tracking-widest block mb-2">Favicon</label>
-                       <input type="file" accept="image/*" onChange={(e) => {
+                       <input type="file" accept="image/*" onChange={async (e) => {
                           if (e.target.files && e.target.files[0]) {
-                            const reader = new FileReader();
-                            reader.onload = (ev) => onUpdateConfig({...siteConfig, favicon: ev.target?.result as string});
-                            reader.readAsDataURL(e.target.files[0]);
+                            try {
+                              const resized = await resizeImage(e.target.files[0], 128, 128);
+                              onUpdateConfig({...siteConfig, favicon: resized});
+                            } catch (err) {
+                              console.error("Error resizing image", err);
+                            }
                           }
                       }} className="w-full text-sm text-slate-500 dark:text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 dark:file:bg-indigo-900 dark:file:text-indigo-200" />
                       {siteConfig.favicon && <div className="mt-2"><img src={siteConfig.favicon} alt="Favicon Preview" className="h-8 w-8 object-contain border dark:border-slate-700 p-1 rounded-lg bg-white" /></div>}
@@ -1393,7 +1444,10 @@ const ChatPage = ({ settings }: { settings: ChatSettings }) => {
 
 const App = () => {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('user');
+    return saved ? JSON.parse(saved) : null;
+  });
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
 
@@ -1670,39 +1724,60 @@ const App = () => {
   const handleUpdateConfig = async (config: SiteConfig) => {
     setSiteConfig(config);
     try {
-      await fetch('/api/settings/config', {
+      const res = await fetch('/api/settings/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
       });
-    } catch (e) {
+      if (!res.ok) {
+        const text = await res.text();
+        let errorMsg = text;
+        try { errorMsg = JSON.parse(text).error; } catch(e) {}
+        alert("Server Error: " + errorMsg);
+      }
+    } catch (e: any) {
       console.error(e);
+      alert(`Connection Error: ${e.message}`);
     }
   };
 
   const handleUpdateEmailSettings = async (settings: EmailSettings) => {
     setEmailSettings(settings);
     try {
-      await fetch('/api/settings/email', {
+      const res = await fetch('/api/settings/email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings)
       });
-    } catch (e) {
+      if (!res.ok) {
+        const text = await res.text();
+        let errorMsg = text;
+        try { errorMsg = JSON.parse(text).error; } catch(e) {}
+        alert("Server Error: " + errorMsg);
+      }
+    } catch (e: any) {
       console.error(e);
+      alert(`Connection Error: ${e.message}`);
     }
   };
 
   const handleUpdateChatSettings = async (settings: ChatSettings) => {
     setChatSettings(settings);
     try {
-      await fetch('/api/settings/chat', {
+      const res = await fetch('/api/settings/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings)
       });
-    } catch (e) {
+      if (!res.ok) {
+        const text = await res.text();
+        let errorMsg = text;
+        try { errorMsg = JSON.parse(text).error; } catch(e) {}
+        alert("Server Error: " + errorMsg);
+      }
+    } catch (e: any) {
       console.error(e);
+      alert(`Connection Error: ${e.message}`);
     }
   };
 
@@ -1801,10 +1876,12 @@ const App = () => {
 
   const handleLogin = (u: User) => {
       setUser(u);
+      localStorage.setItem('user', JSON.stringify(u));
   };
   
   const handleLogout = () => {
       setUser(null);
+      localStorage.removeItem('user');
       window.location.hash = "/";
   };
 
