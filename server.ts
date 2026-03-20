@@ -68,9 +68,17 @@ async function initDB() {
       console.log('Could not add cart column, it might already exist');
     }
 
+    try {
+      await pool.query('ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT FALSE');
+      await pool.query('ALTER TABLE users ADD COLUMN verification_token VARCHAR(255)');
+      await pool.query('ALTER TABLE users ADD COLUMN reset_token VARCHAR(255)');
+    } catch (e) {
+      console.log('Could not add verification columns, they might already exist');
+    }
+
     await pool.query(`
-      INSERT IGNORE INTO users (name, email, password, role) 
-      VALUES ('System Admin', 'info@msdw.com', 'admin', 'admin')
+      INSERT IGNORE INTO users (name, email, password, role, is_verified) 
+      VALUES ('System Admin', 'info@msdw.com', 'admin', 'admin', TRUE)
     `);
 
     await pool.query(`
@@ -118,6 +126,14 @@ async function initDB() {
         chat_settings LONGTEXT
       )
     `);
+
+    try {
+      await pool.query('ALTER TABLE site_settings MODIFY COLUMN site_config LONGTEXT');
+      await pool.query('ALTER TABLE site_settings MODIFY COLUMN email_settings LONGTEXT');
+      await pool.query('ALTER TABLE site_settings MODIFY COLUMN chat_settings LONGTEXT');
+    } catch (e) {
+      console.log('Could not modify site_settings columns, they might already be LONGTEXT');
+    }
 
     await pool.query(`
       INSERT IGNORE INTO site_settings (id, site_config, email_settings, chat_settings) 
@@ -303,7 +319,29 @@ async function startServer() {
   // Users
   app.get("/api/users", async (req, res) => {
     try {
-      const [rows] = await pool.query('SELECT id, name, email, role, wishlist, cart FROM users');
+      const [rows] = await pool.query('SELECT id, name, email, role, wishlist, cart, is_verified as isVerified, verification_token as verificationToken, reset_token as resetToken FROM users');
+      const formattedRows = (rows as any[]).map(row => ({
+        ...row,
+        isVerified: !!row.isVerified
+      }));
+      res.json(formattedRows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/debug/users-schema", async (req, res) => {
+    try {
+      const [rows] = await pool.query('DESCRIBE users');
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/debug/site-settings-schema", async (req, res) => {
+    try {
+      const [rows] = await pool.query('DESCRIBE site_settings');
       res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -312,12 +350,12 @@ async function startServer() {
 
   app.post("/api/users", async (req, res) => {
     try {
-      const { name, email, password, role } = req.body;
+      const { name, email, password, role, isVerified } = req.body;
       const [result] = await pool.query(
-        'INSERT INTO users (name, email, password, role, wishlist, cart) VALUES (?, ?, ?, ?, ?, ?)',
-        [name, email, password, role || 'user', '[]', '[]']
+        'INSERT INTO users (name, email, password, role, wishlist, cart, is_verified) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [name, email, password, role || 'user', '[]', '[]', isVerified ? 1 : 0]
       );
-      res.json({ id: String((result as any).insertId), name, email, role, wishlist: '[]', cart: '[]' });
+      res.json({ id: String((result as any).insertId), name, email, role, wishlist: '[]', cart: '[]', isVerified: isVerified ? true : false });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -326,9 +364,10 @@ async function startServer() {
   app.post("/api/login", async (req, res) => {
     try {
       const { email, password } = req.body;
-      const [rows]: any = await pool.query('SELECT id, name, email, role, wishlist, cart FROM users WHERE email = ? AND password = ?', [email, password]);
+      const [rows]: any = await pool.query('SELECT id, name, email, role, wishlist, cart, is_verified as isVerified FROM users WHERE email = ? AND password = ?', [email, password]);
       if (rows.length > 0) {
-        res.json(rows[0]);
+        const user = { ...rows[0], isVerified: !!rows[0].isVerified };
+        res.json(user);
       } else {
         res.status(401).json({ error: "Invalid credentials" });
       }

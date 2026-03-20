@@ -31,7 +31,7 @@ const resizeImage = (file: File, maxWidth: number, maxHeight: number): Promise<s
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL(file.type || 'image/jpeg', 0.8));
+          resolve(canvas.toDataURL('image/webp', 0.8));
         } else {
           resolve(e.target?.result as string);
         }
@@ -740,7 +740,7 @@ const AuthPage = ({ onLogin }: { onLogin: (u: User, userCart?: CartItem[]) => vo
           try { parsedWishlist = JSON.parse(data.wishlist || '[]'); } catch(e) {}
           let parsedCart = [];
           try { parsedCart = JSON.parse(data.cart || '[]'); } catch(e) {}
-          onLogin({ ...data, id: String(data.id), wishlist: parsedWishlist, isVerified: true }, parsedCart);
+          onLogin({ ...data, id: String(data.id), wishlist: parsedWishlist, isVerified: !!data.isVerified }, parsedCart);
           navigate(data.role === 'admin' ? '/admin' : '/dashboard');
         } else {
           alert(data.error || "Invalid credentials.");
@@ -757,7 +757,7 @@ const AuthPage = ({ onLogin }: { onLogin: (u: User, userCart?: CartItem[]) => vo
           try { parsedWishlist = JSON.parse(data.wishlist || '[]'); } catch(e) {}
           let parsedCart = [];
           try { parsedCart = JSON.parse(data.cart || '[]'); } catch(e) {}
-          onLogin({ ...data, id: String(data.id), wishlist: parsedWishlist, isVerified: true }, parsedCart);
+          onLogin({ ...data, id: String(data.id), wishlist: parsedWishlist, isVerified: !!data.isVerified }, parsedCart);
           navigate('/dashboard');
         } else {
           alert(data.error || "Failed to create account.");
@@ -1660,7 +1660,7 @@ const App = () => {
         setUsers(data.map(u => {
           let parsedWishlist = [];
           try { parsedWishlist = JSON.parse(u.wishlist || '[]'); } catch(e) {}
-          return { ...u, id: String(u.id), wishlist: parsedWishlist, isVerified: true };
+          return { ...u, id: String(u.id), wishlist: parsedWishlist, isVerified: !!u.isVerified };
         }));
       } else {
         setUsers([
@@ -1943,6 +1943,20 @@ const App = () => {
     }
   };
 
+  useEffect(() => {
+    if (user?.role === 'admin') {
+      fetch('/api/users').then(res => res.json()).then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setUsers(data.map(u => {
+            let parsedWishlist = [];
+            try { parsedWishlist = JSON.parse(u.wishlist || '[]'); } catch(e) {}
+            return { ...u, id: String(u.id), wishlist: parsedWishlist, isVerified: !!u.isVerified };
+          }));
+        }
+      }).catch(console.error);
+    }
+  }, [user]);
+
   const handleLogin = (u: User, userCart?: CartItem[]) => {
       setUser(u);
       localStorage.setItem('user', JSON.stringify(u));
@@ -1972,7 +1986,7 @@ const App = () => {
       const res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: u.name, email: u.email, password: u.password || 'password123', role: u.role })
+        body: JSON.stringify({ name: u.name, email: u.email, password: u.password || 'password123', role: u.role, isVerified: u.isVerified })
       });
       const data = await res.json();
       if (data.id) {
